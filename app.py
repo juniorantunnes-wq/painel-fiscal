@@ -142,7 +142,7 @@ st.markdown("""
         color: #86efac;
     }
 </style>
-""", unsafe_allow_html=unsafe_allow_ok=True)
+""", unsafe_allow_html=True)
 
 # --- CABEÇALHO DO SISTEMA ---
 st.markdown("""
