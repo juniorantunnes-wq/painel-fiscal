@@ -4,220 +4,132 @@ import zipfile
 import re
 import urllib.request
 import json
+import urllib.parse
+from datetime import datetime
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
+# ==============================================================================
+# CONFIGURAÇÕES DO ESCRITÓRIO E CONSULTORES TRIBUTÁRIOS
+# ==============================================================================
+NOME_ESCRITORIO = "Seu Escritório Contábil & Tributário"
+NUMERO_WHATSAPP = "5585999999999"  # Insira o DDD + Número (Ex: 5585999999999)
+
+# ==============================================================================
+# BASE DE EDITAIS E REGRAS DE TRANSAÇÃO PGFN (Mapeamento de Regras Fiscais)
+# ==============================================================================
+EDITAIS_PGFN = [
+    {
+        "nome": "Transação por Adesão (Débitos até R$ 50 Mi)",
+        "desconto_max": "Até 70% em juros, multas e encargos",
+        "prazo_max": "Até 145 parcelas mensais",
+        "elegibilidade": "Empresas com débitos inscritos na Dívida Ativa da União e baixa capacidade de pagamento (CAPAG C ou D)."
+    },
+    {
+        "nome": "Transação para Microempresas e EPP (Simples Nacional / MEI)",
+        "desconto_max": "Até 50% do valor total da dívida",
+        "prazo_max": "Entrada facilitada + até 60 parcelas",
+        "elegibilidade": "Optantes do Simples Nacional ou MEI com débitos previdenciários e tributários."
+    },
+    {
+        "nome": "Transação Individual ou de Pequeno Valor",
+        "desconto_max": "Até 50% sobre o montante principal/juros",
+        "prazo_max": "Até 60 meses (Previdenciário) ou 145 meses (Demais)",
+        "elegibilidade": "Débitos consolidados de menor valor ou devedores em recuperação judicial."
+    }
+]
+
+# ==============================================================================
+# CONFIGURAÇÃO DA PÁGINA
+# ==============================================================================
 st.set_page_config(
-    page_title="Sistema de Inteligência Fiscal",
+    page_title=f"Inteligência Fiscal & Editais PGFN - {NOME_ESCRITORIO}",
     page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# --- ESTILIZAÇÃO CSS CORPORATIVA PREMIUM (CLEAN & ENTERPRISE) ---
+# ==============================================================================
+# ESTILIZAÇÃO CSS
+# ==============================================================================
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-    /* Reset Geral para Light/Enterprise Theme */
-    html, body, [class*="css"], .stApp {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+    .stApp {
         background-color: #f1f5f9 !important;
+        font-family: 'Inter', sans-serif !important;
         color: #0f172a !important;
     }
 
-    /* Container Principal */
     .block-container {
-        padding-top: 2rem !important;
+        padding-top: 1.5rem !important;
         padding-bottom: 3rem !important;
-        max-width: 1280px !important;
+        max-width: 1200px !important;
     }
 
-    /* Topbar / Navbar Corporate */
-    .navbar-header {
+    .header-card {
         background: #ffffff;
-        border: 1px solid #e2e8f0;
+        border: 1px solid #cbd5e1;
         border-radius: 12px;
-        padding: 20px 28px;
+        padding: 24px;
         margin-bottom: 20px;
-        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    .brand-title {
-        font-size: 20px;
-        font-weight: 700;
-        color: #0f172a;
-        margin: 0;
-        letter-spacing: -0.02em;
-    }
-    .brand-subtitle {
-        font-size: 13px;
-        color: #64748b;
-        margin-top: 2px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
 
-    /* Input & Botão de Pesquisa */
-    div[data-baseweb="input"] {
-        background-color: #ffffff !important;
-        border: 1px solid #cbd5e1 !important;
-        border-radius: 8px !important;
-        box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-    }
-    div[data-baseweb="input"]:focus-within {
-        border-color: #2563eb !important;
-        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1) !important;
-    }
-    .stButton > button {
-        background-color: #1e293b !important;
-        color: #ffffff !important;
-        font-weight: 600 !important;
-        border-radius: 8px !important;
-        border: none !important;
-        height: 42px !important;
-        transition: all 0.2s ease !important;
-    }
-    .stButton > button:hover {
-        background-color: #0f172a !important;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    .alert-pgfn {
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+        color: #ffffff;
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 24px;
+        box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
     }
 
-    /* Componentes de Cards (KPIs) */
-    .kpi-card {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        padding: 16px 20px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-    }
-    .kpi-label {
-        font-size: 11px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        color: #64748b;
-        margin-bottom: 4px;
-    }
-    .kpi-value {
-        font-size: 16px;
-        font-weight: 600;
-        color: #0f172a;
-    }
-    .kpi-value-highlight {
-        font-size: 20px;
-        font-weight: 700;
-        color: #2563eb;
-    }
-
-    /* Badges Status Cadastral */
-    .badge-ativa {
-        background-color: #dcfce7;
-        color: #166534;
-        border: 1px solid #bbf7d0;
-        padding: 4px 12px;
-        border-radius: 9999px;
-        font-size: 12px;
-        font-weight: 600;
-        display: inline-block;
-    }
-    .badge-outros {
-        background-color: #fee2e2;
-        color: #991b1b;
-        border: 1px solid #fecaca;
-        padding: 4px 12px;
-        border-radius: 9999px;
-        font-size: 12px;
-        font-weight: 600;
-        display: inline-block;
-    }
-
-    /* Abas Customizadas (Navegação Clara e Legível) */
-    .stTabs [data-baseweb="tab-list"] {
-        background-color: #e2e8f0 !important;
-        padding: 4px !important;
-        border-radius: 8px !important;
-        gap: 4px !important;
-    }
-    .stTabs [data-baseweb="tab"] {
-        height: 38px !important;
-        border-radius: 6px !important;
-        color: #475569 !important;
-        font-weight: 600 !important;
-        font-size: 13px !important;
-        background-color: transparent !important;
-        border: none !important;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #ffffff !important;
-        color: #0f172a !important;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1) !important;
-    }
-
-    /* Tabelas HTML Customizadas Enterprise */
-    .custom-table {
-        width: 100%;
-        border-collapse: collapse;
+    .edital-box {
+        background: #f8fafc;
+        border: 1px solid #cbd5e1;
+        border-left: 4px solid #2563eb;
+        border-radius: 6px;
+        padding: 14px;
         margin-top: 10px;
-        font-size: 13px;
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 8px;
-        overflow: hidden;
-    }
-    .custom-table th {
-        background-color: #f8fafc;
-        color: #475569;
-        font-weight: 600;
-        text-align: left;
-        padding: 12px 16px;
-        border-bottom: 1px solid #e2e8f0;
-        text-transform: uppercase;
-        font-size: 11px;
-        letter-spacing: 0.05em;
-    }
-    .custom-table td {
-        padding: 12px 16px;
-        border-bottom: 1px solid #f1f5f9;
-        color: #1e293b;
-    }
-    .custom-table tr:last-child td {
-        border-bottom: none;
-    }
-    .custom-table tr:hover {
-        background-color: #f8fafc;
     }
 
-    /* Status Alerts */
-    .alert-box-danger {
-        background-color: #fef2f2;
-        border: 1px solid #fecaca;
-        border-left: 4px solid #ef4444;
-        padding: 16px 20px;
-        border-radius: 8px;
-        color: #991b1b;
+    .btn-wa {
+        background-color: #22c55e !important;
+        color: #ffffff !important;
+        font-weight: 700 !important;
+        padding: 12px 20px !important;
+        border-radius: 8px !important;
+        text-decoration: none !important;
+        display: inline-block !important;
+        text-align: center !important;
     }
-    .alert-box-success {
-        background-color: #f0fdf4;
-        border: 1px solid #bbf7d0;
-        border-left: 4px solid #22c55e;
-        padding: 16px 20px;
-        border-radius: 8px;
-        color: #166534;
+
+    .field-box {
+        border: 1px solid #e2e8f0;
+        padding: 8px 12px;
+        background-color: #ffffff;
+        margin-bottom: -1px;
+        margin-right: -1px;
+    }
+
+    .field-label {
+        font-size: 10px;
+        font-weight: 700;
+        color: #64748b;
+        text-transform: uppercase;
+    }
+
+    .field-value {
+        font-size: 13px;
+        font-weight: 600;
+        color: #0f172a;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- TOPBAR DA APLICAÇÃO ---
-st.markdown("""
-<div class="navbar-header">
-    <div>
-        <div class="brand-title">⚖️ Sistema de Inteligência Fiscal e Conformidade</div>
-        <div class="brand-subtitle">Plataforma corporativa de consulta cadastral, quadro de sócios e diagnóstico da Dívida Ativa da União.</div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-# --- CARREGAR BASES LOCAIS ---
+# ==============================================================================
+# CARREGAMENTO DE BASES LOCAIS
+# ==============================================================================
 @st.cache_data
 def carregar_bases():
     df_pgfn = pd.DataFrame()
@@ -248,257 +160,172 @@ def carregar_bases():
 
 df_pgfn, df_cnds = carregar_bases()
 
-# --- CAMPO DE BUSCA PRINCIPAL ---
-col_search, col_btn = st.columns([5, 1])
-with col_search:
-    cnpj_input = st.text_input(
-        "CNPJ",
-        placeholder="Informe o CNPJ para análise completa (ex: 41.618.558/0001-12)",
-        label_visibility="collapsed"
-    )
-with col_btn:
-    btn_buscar = st.button("Consultar CNPJ", use_container_width=True)
+# ==============================================================================
+# TOPO DO APP
+# ==============================================================================
+st.markdown(f"""
+<div class="header-card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+        <div>
+            <h2 style="margin: 0; font-size: 24px; color: #0f172a;">⚖️ Portal de Diagnóstico Fiscal & Oportunidades PGFN</h2>
+            <p style="margin: 4px 0 0 0; color: #64748b; font-size: 14px;">Análise Contábil de Regularidade, Simulador de Editais de Transação e Emissão de CNDs</p>
+        </div>
+        <div>
+            <span style="background: #e0e7ff; color: #3730a3; padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 13px;">
+                {NOME_ESCRITORIO}
+            </span>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
-# --- EXECUÇÃO E RETORNO DOS DADOS ---
+# ==============================================================================
+# FORMULÁRIO DE CONSULTA
+# ==============================================================================
+col_in, col_bt = st.columns([4, 1])
+with col_in:
+    cnpj_input = st.text_input("CNPJ da Empresa:", placeholder="Digite o CNPJ (ex: 41.618.558/0001-12)", label_visibility="collapsed")
+with col_bt:
+    btn_buscar = st.button("🔍 Diagnosticar CNPJ", use_container_width=True, type="primary")
+
 if btn_buscar or cnpj_input:
     if cnpj_input.strip():
         cnpj_limpo = re.sub(r'\D', '', cnpj_input)
         
         dados_api = {}
-        with st.spinner("Buscando registros oficiais..."):
+        with st.spinner("Realizando auditoria cadastral e consultando bases públicas..."):
             try:
                 url = f"https://brasilapi.com.br/api/cnpj/v1/{cnpj_limpo}"
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req) as resp:
                     dados_api = json.loads(resp.read().decode('utf-8'))
             except Exception:
-                st.error("⚠️ Não foi possível localizar o CNPJ informado na base da Receita Federal.")
+                st.error("⚠️ CNPJ não encontrado na base pública da Receita Federal.")
 
         if dados_api:
             razao_social = dados_api.get("razao_social", "N/A")
-            nome_fantasia = dados_api.get("nome_fantasia") or "Não informado"
+            nome_fantasia = dados_api.get("nome_fantasia") or "********"
             situacao = dados_api.get("descricao_situacao_cadastral", "N/A")
-            data_situacao = dados_api.get("data_situacao_cadastral", "N/A")
-            data_inicio = dados_api.get("data_inicio_atividade", "N/A")
-            capital_social = dados_api.get("capital_social", 0.0)
-            
-            logradouro = dados_api.get("logradouro", "")
-            numero = dados_api.get("numero", "")
-            bairro = dados_api.get("bairro", "")
-            municipio = dados_api.get("municipio", "")
+            porte = dados_api.get("porte", "N/A")
             uf = dados_api.get("uf", "")
-            cep = dados_api.get("cep", "")
-            email = dados_api.get("email") or "Não informado"
-            tel = dados_api.get("ddd_telefone_1", "")
-            ddd_tel = f"({tel[:2]}) {tel[2:]}" if tel else "Não informado"
-
-            cnae_principal_cod = dados_api.get("cnae_fiscal", "")
-            cnae_principal_desc = dados_api.get("cnae_fiscal_descricao", "")
-            cnaes_secundarios = dados_api.get("cnaes_secundarios", [])
-
-            optante_simples = "Sim" if dados_api.get("opcao_pelo_simples") else "Não"
-            optante_mei = "Sim" if dados_api.get("opcao_pelo_mei") else "Não"
             qsa = dados_api.get("qsa", [])
+            optante_simples = dados_api.get("opcao_pelo_simples", False)
 
-            # CARD DE IDENTIFICAÇÃO DA EMPRESA
-            badge_class = "badge-ativa" if situacao.upper() == "ATIVA" else "badge-outros"
-            
-            st.markdown(f"""
-            <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px 24px; margin-top: 15px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);">
-                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
-                    <div>
-                        <div style="font-size: 18px; font-weight: 700; color: #0f172a;">{razao_social}</div>
-                        <div style="font-size: 13px; color: #64748b; margin-top: 2px;">Nome Fantasia: <b style="color: #334155;">{nome_fantasia}</b> &nbsp;|&nbsp; CNPJ: <b style="color: #334155;">{cnpj_input}</b></div>
-                    </div>
-                    <div>
-                        <span class="{badge_class}">SITUAÇÃO: {situacao}</span>
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            # Verification PGFN
+            encontrados_pgfn = pd.DataFrame()
+            tem_debito_pgfn = False
+            valor_debito_raw = 0.0
+            valor_debito_str = "R$ 0,00"
 
-            # ESTRUTURA DE NAVEGAÇÃO EM ABAS
-            tab1, tab2, tab3, tab4, tab5 = st.tabs([
-                "📋 Visão Geral", 
-                "👥 Quadro Societário (QSA)", 
-                "💼 Atividades (CNAE)", 
-                "⚠️ Dívida Ativa (PGFN)", 
-                "🌐 CNDs Mapeadas"
-            ])
+            if not df_pgfn.empty:
+                encontrados_pgfn = df_pgfn[df_pgfn['CPF/CNPJ'].str.replace(r'\D', '', regex=True) == cnpj_limpo]
+                if len(encontrados_pgfn) > 0:
+                    tem_debito_pgfn = True
+                    valor_debito_str = encontrados_pgfn.iloc[0].get('Valor Total', 'R$ 0,00')
 
-            # ABA 1: VISÃO GERAL
-            with tab1:
-                st.write("")
-                c1, c2, c3, c4 = st.columns(4)
-                
-                with c1:
-                    st.markdown(f"""
-                    <div class="kpi-card">
-                        <div class="kpi-label">Capital Social</div>
-                        <div class="kpi-value-highlight">R$ {capital_social:,.2f}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                with c2:
-                    st.markdown(f"""
-                    <div class="kpi-card">
-                        <div class="kpi-label">Data de Abertura</div>
-                        <div class="kpi-value">{data_inicio}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                with c3:
-                    st.markdown(f"""
-                    <div class="kpi-card">
-                        <div class="kpi-label">Data Situação</div>
-                        <div class="kpi-value">{data_situacao}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                with c4:
-                    st.markdown(f"""
-                    <div class="kpi-card">
-                        <div class="kpi-label">Simples Nacional / MEI</div>
-                        <div class="kpi-value">Simples: <b>{optante_simples}</b> | MEI: <b>{optante_mei}</b></div>
-                    </div>
-                    """, unsafe_allow_html=True)
+            # ==============================================================================
+            # BLOCO TRIBUTÁRIO: OPORTUNIDADES DE EDITAIS PGFN
+            # ==============================================================================
+            if tem_debito_pgfn:
+                text_wa = urllib.parse.quote(
+                    f"Olá! Fiz o diagnóstico no sistema do CNPJ {cnpj_input} ({razao_social}) "
+                    f"e identifiquei débitos inscritos na PGFN no valor de R$ {valor_debito_str}. "
+                    f"Gostaria de solicitar um estudo de enquadramento nos Editais de Transação Tributária."
+                )
+                link_wa = f"https://wa.me/{NUMERO_WHATSAPP}?text={text_wa}"
 
-                st.write("")
-                col_e, col_c = st.columns(2)
-                with col_e:
-                    st.markdown(f"""
-                    <div class="kpi-card">
-                        <div class="kpi-label" style="color:#2563eb;">📍 Endereço Cadastral</div>
-                        <div style="font-size: 13px; line-height: 1.6; color: #334155; margin-top: 8px;">
-                            <b>Logradouro:</b> {logradouro}, Nº {numero}<br>
-                            <b>Bairro:</b> {bairro} | <b>CEP:</b> {cep}<br>
-                            <b>Município/UF:</b> {municipio} - {uf}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                with col_c:
-                    st.markdown(f"""
-                    <div class="kpi-card">
-                        <div class="kpi-label" style="color:#2563eb;">📞 Contato Oficial</div>
-                        <div style="font-size: 13px; line-height: 1.6; color: #334155; margin-top: 8px;">
-                            <b>E-mail:</b> {email}<br>
-                            <b>Telefone:</b> {ddd_tel}<br>
-                            <b>Órgão Registrador:</b> Receita Federal do Brasil
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-            # ABA 2: QUADRO SOCIETÁRIO (QSA DENTRO DE TABELA HTML PROFISSIONAL)
-            with tab2:
-                st.write("")
-                if qsa:
-                    rows_html = ""
-                    for socio in qsa:
-                        nome_socio = socio.get('nome_socio', 'N/A')
-                        qual_socio = socio.get('qualificacao_socio', 'N/A')
-                        faixa_etaria = socio.get('faixa_etaria', 'N/A')
-                        rows_html += f"<tr><td><b>{nome_socio}</b></td><td>{qual_socio}</td><td>{faixa_etaria}</td></tr>"
-
-                    table_html = f"""
-                    <table class="custom-table">
-                        <thead>
-                            <tr>
-                                <th>Nome do Sócio / Administrador</th>
-                                <th>Qualificação / Cargo</th>
-                                <th>Faixa Etária</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {rows_html}
-                        </tbody>
-                    </table>
-                    """
-                    st.markdown(table_html, unsafe_allow_html=True)
-                else:
-                    st.info("Nenhum sócio ou administrador registrado na base pública do CNPJ.")
-
-            # ABA 3: ATIVIDADES ECONOMICAS (CNAE)
-            with tab3:
-                st.write("")
                 st.markdown(f"""
-                <div class="kpi-card" style="margin-bottom: 16px;">
-                    <div class="kpi-label" style="color:#2563eb;">Atividade Econômica Principal (CNAE)</div>
-                    <div style="font-size: 15px; font-weight: 600; color: #0f172a; margin-top: 4px;">
-                        {cnae_principal_cod} — <span style="color: #475569; font-weight: 400;">{cnae_principal_desc}</span>
+                <div class="alert-pgfn">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 20px;">
+                        <div style="flex: 3;">
+                            <span style="background: #ef4444; color: white; font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 4px;">DÍVIDA ATIVA IDENTIFICADA</span>
+                            <h3 style="margin: 8px 0; font-size: 22px; color: #ffffff;">{razao_social}</h3>
+                            <p style="margin: 0 0 12px 0; color: #cbd5e1; font-size: 15px;">
+                                Total Inscrito na Dívida Ativa da União: <b style="color: #f87171; font-size: 20px;">R$ {valor_debito_str}</b>
+                            </p>
+                            <div style="font-size: 13px; color: #94a3b8; line-height: 1.5;">
+                                ⚠️ Esta empresa possui pendência fiscal que impede a emissão de CND e certidões negativas para licitações e operações de crédito.
+                            </div>
+                        </div>
+                        <div style="flex: 1; text-align: right; min-width: 250px;">
+                            <a href="{link_wa}" target="_blank" class="btn-wa" style="width: 100%;">
+                                💬 Solicitar Estudo de Enquadramento
+                            </a>
+                        </div>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
 
-                if cnaes_secundarios:
-                    st.markdown("<div class='kpi-label' style='margin-bottom: 8px;'>Atividades Secundárias Mapeadas</div>", unsafe_allow_html=True)
-                    rows_sec = ""
-                    for item in cnaes_secundarios:
-                        rows_sec += f"<tr><td><b>{item.get('codigo')}</b></td><td>{item.get('descricao')}</td></tr>"
-                    
-                    st.markdown(f"""
-                    <table class="custom-table">
-                        <thead>
-                            <tr>
-                                <th style="width: 160px;">Código CNAE</th>
-                                <th>Descrição da Atividade</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {rows_sec}
-                        </tbody>
-                    </table>
-                    """, unsafe_allow_html=True)
+                st.markdown("### 🎯 Simulador de Editais Elegíveis (Transação PGFN)")
+                st.caption("Abaixo estão as modalidades de negociação da PGFN aplicáveis a este perfil de empresa:")
 
-            # ABA 4: DÍVIDA ATIVA (PGFN)
-            with tab4:
+                cols_ed = st.columns(len(EDITAIS_PGFN))
+                for idx, edital in enumerate(EDITAIS_PGFN):
+                    with cols_ed[idx]:
+                        st.markdown(f"""
+                        <div class="edital-box">
+                            <div style="font-weight: 700; color: #1e3a8a; font-size: 14px; margin-bottom: 6px;">{edital['nome']}</div>
+                            <div style="font-size: 12px; color: #047857; font-weight: 700; margin-bottom: 4px;">✅ {edital['desconto_max']}</div>
+                            <div style="font-size: 12px; color: #3b82f6; font-weight: 600; margin-bottom: 8px;">🗓️ {edital['prazo_max']}</div>
+                            <div style="font-size: 11px; color: #64748b;">{edital['elegibilidade']}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
                 st.write("")
-                encontrados = pd.DataFrame()
-                if not df_pgfn.empty:
-                    encontrados = df_pgfn[df_pgfn['CPF/CNPJ'].str.replace(r'\D', '', regex=True) == cnpj_limpo]
+            else:
+                st.success("🟢 **SITUAÇÃO REGULAR NA PGFN**: Nenhum débito inscrito na Dívida Ativa da União foi localizado para este CNPJ.")
 
-                if len(encontrados) > 0:
-                    row = encontrados.iloc[0]
-                    valor_debito = row.get('Valor Total', 'N/A')
-                    st.markdown(f"""
-                    <div class="alert-box-danger">
-                        <div style="font-size: 16px; font-weight: 700; margin-bottom: 4px;">🚨 DÉBITO ENCONTRADO NA PGFN</div>
-                        <div style="font-size: 13px;"><b>Razão Social Inscrita:</b> {row.get('Nome', 'N/A')}</div>
-                        <div style="font-size: 15px; margin-top: 6px;"><b>Valor Inscrito na Dívida Ativa:</b> <span style="font-weight: 700;">R$ {valor_debito}</span></div>
+            # ==============================================================================
+            # DETALHAMENTO EM ABAS
+            # ==============================================================================
+            tab_cartao, tab_qsa, tab_pgfn_detalhes, tab_cnds = st.tabs([
+                "📋 Cadastro Completo (RFB)", 
+                "👥 Quadro Societário (QSA)", 
+                "⚖️ Detalhamento PGFN", 
+                "🌐 Mapeamento de CNDs"
+            ])
+
+            with tab_cartao:
+                st.markdown(f"""
+                <div style="background: white; padding: 20px; border-radius: 8px; border: 1px solid #cbd5e1;">
+                    <div style="display: flex; flex-wrap: wrap;">
+                        <div class="field-box" style="flex: 2;"><div class="field-label">Razão Social</div><div class="field-value">{razao_social}</div></div>
+                        <div class="field-box" style="flex: 2;"><div class="field-label">Nome Fantasia</div><div class="field-value">{nome_fantasia}</div></div>
+                        <div class="field-box" style="flex: 1;"><div class="field-label">Porte</div><div class="field-value">{porte}</div></div>
                     </div>
-                    """, unsafe_allow_html=True)
+                    <div style="display: flex; flex-wrap: wrap;">
+                        <div class="field-box" style="flex: 1;"><div class="field-label">Situação Cadastral</div><div class="field-value">{situacao}</div></div>
+                        <div class="field-box" style="flex: 1;"><div class="field-label">UF</div><div class="field-value">{uf}</div></div>
+                        <div class="field-box" style="flex: 1;"><div class="field-label">Optante Simples</div><div class="field-value">{"SIM" if optante_simples else "NÃO"}</div></div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            with tab_qsa:
+                if qsa:
+                    st.table(pd.DataFrame(qsa))
                 else:
-                    st.markdown("""
-                    <div class="alert-box-success">
-                        <div style="font-size: 15px; font-weight: 700;">🟢 REGULARIDADE FISCAL CONFIRMADA NA PGFN</div>
-                        <div style="font-size: 13px; margin-top: 2px;">Nenhum débito pendente na Dívida Ativa da União foi encontrado nesta base.</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.info("Nenhum sócio ou administrador constante na base pública.")
 
-            # ABA 5: CNDs
-            with tab5:
-                st.write("")
+            with tab_pgfn_detalhes:
+                if tem_debito_pgfn:
+                    st.dataframe(encontrados_pgfn, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Nenhum débito na PGFN cadastrado nesta base.")
+
+            with tab_cnds:
                 if not df_cnds.empty:
-                    filtro_uf = df_cnds[df_cnds['UF'] == uf] if ('UF' in df_cnds.columns and uf) else df_cnds
-                    rows_cnd = ""
-                    for idx, row_cnd in filtro_uf.head(10).iterrows():
-                        origem = row_cnd.get('ORIGEM', 'N/A')
-                        uf_cnd = row_cnd.get('UF', 'N/A')
-                        tipo = row_cnd.get('TIPO', 'N/A')
-                        rows_cnd += f"<tr><td><b>{origem}</b></td><td>{uf_cnd}</td><td>{tipo}</td></tr>"
+                    filtro = df_cnds[df_cnds['UF'] == uf] if ('UF' in df_cnds.columns and uf) else df_cnds
+                    st.dataframe(filtro.head(15), use_container_width=True, hide_index=True)
 
-                    st.markdown(f"""
-                    <table class="custom-table">
-                        <thead>
-                            <tr>
-                                <th>Origem / Órgão</th>
-                                <th>UF</th>
-                                <th>Tipo de Certidão</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {rows_cnd}
-                        </tbody>
-                    </table>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.info("Nenhuma base local de CNDs disponível.")
-    else:
-        st.warning("Informe um número de CNPJ válido.")
+# ==============================================================================
+# RODAPÉ DE TRANSPARÊNCIA E CONFORMIDADE
+# ==============================================================================
+st.markdown("---")
+st.markdown(f"""
+<div style="background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 16px; font-size: 12px; color: #475569; line-height: 1.6;">
+    <b>AVISO LEGAL DE TRANSPARÊNCIA E PRIVACIDADE:</b><br>
+    As informações apresentadas são públicas e não confidenciais, obtidas em estrita conformidade com o 
+    <b>Decreto nº 8.777/2016 (Política de Dados Abertos)</b> e a <b>Lei nº 12.527/2011 (Lei de Acesso à Informação)</b>. 
+    Este portal é gerido por <b>{NOME_ESCRITORIO}</b> como ferramenta de diagnóstico e assessoria tributária em regularização fiscal e transação junto à PGFN e Receita Federal.
+</div>
+""", unsafe_allow_html=True)
