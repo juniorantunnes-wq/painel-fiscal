@@ -1,26 +1,4 @@
-"""
-Painel de Diagnóstico Fiscal & Editais PGFN
-============================================
-Aplicação Streamlit para diagnóstico cadastral (Receita Federal),
-verificação de débitos inscritos na Dívida Ativa da União (PGFN)
-e simulação de enquadramento em editais de transação tributária.
 
-Melhorias desta versão em relação ao protótipo original:
-- Validação real de CNPJ (dígitos verificadores), não apenas regex.
-- Requisições HTTP robustas (timeout, retries, tratamento de erros
-  específicos: rate limit, não encontrado, indisponibilidade).
-- Configurações via variáveis de ambiente / st.secrets (nada de
-  segredos hardcoded no código-fonte).
-- Carregamento de bases locais com feedback claro ao usuário quando
-  os arquivos não existem, em vez de falhar silenciosamente.
-- Possibilidade de enviar as bases (ZIP da PGFN / XLSX de CNDs) por
-  upload, sem depender de arquivos fixos no disco do servidor.
-- Parsing seguro de valores monetários (evita KeyError/TypeError).
-- Estado de busca controlado por session_state (evita reconsultas
-  desnecessárias a cada interação da interface).
-- Exportação do diagnóstico em CSV.
-- Código modularizado em funções puras e testáveis.
-"""
 
 from __future__ import annotations
 
