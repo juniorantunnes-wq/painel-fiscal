@@ -1,5 +1,3 @@
-
-
 from __future__ import annotations
 
 import io
@@ -24,9 +22,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("painel_fiscal")
 
 # ==============================================================================
-# CONFIGURAÇÕES DO ESCRITÓRIO (via st.secrets ou variáveis de ambiente,
-# com fallback para valores padrão — nunca deixe dados sensíveis fixos
-# no código-fonte de um repositório público)
+# CONFIGURAÇÕES DO ESCRITÓRIO
 # ==============================================================================
 def _get_config(key: str, default: str) -> str:
     try:
@@ -38,7 +34,7 @@ def _get_config(key: str, default: str) -> str:
 
 
 NOME_ESCRITORIO = _get_config("NOME_ESCRITORIO", "Seu Escritório Contábil & Tributário")
-NUMERO_WHATSAPP = _get_config("NUMERO_WHATSAPP", "5585999999999")  # DDI+DDD+Número
+NUMERO_WHATSAPP = _get_config("NUMERO_WHATSAPP", "5585999999999")
 BRASILAPI_TIMEOUT = float(_get_config("BRASILAPI_TIMEOUT", "10"))
 CACHE_TTL_SECONDS = int(_get_config("CACHE_TTL_SECONDS", "3600"))
 
@@ -185,7 +181,6 @@ def somente_digitos(texto: str) -> str:
 
 
 def cnpj_valido(cnpj: str) -> bool:
-    """Valida um CNPJ verificando os dígitos verificadores (módulo 11)."""
     cnpj = somente_digitos(cnpj)
     if len(cnpj) != 14 or cnpj == cnpj[0] * 14:
         return False
@@ -209,8 +204,6 @@ def formatar_cnpj(cnpj: str) -> str:
 
 
 def parse_valor_monetario(valor) -> float:
-    """Converte valores como 'R$ 1.234,56', '1234.56' ou floats em float,
-    sem lançar exceção — retorna 0.0 quando não for possível interpretar."""
     if valor is None:
         return 0.0
     if isinstance(valor, (int, float)):
@@ -219,7 +212,6 @@ def parse_valor_monetario(valor) -> float:
     texto = re.sub(r"[^\d,.-]", "", texto)
     if not texto:
         return 0.0
-    # Formato brasileiro: milhar com ponto, decimal com vírgula
     if "," in texto and "." in texto:
         texto = texto.replace(".", "").replace(",", ".")
     elif "," in texto:
@@ -276,7 +268,6 @@ def carregar_bases(
 ) -> BasesCarregadas:
     resultado = BasesCarregadas()
 
-    # Base PGFN (upload tem prioridade sobre arquivo local)
     try:
         if zip_bytes is not None:
             resultado.df_pgfn = _ler_zip_pgfn(io.BytesIO(zip_bytes))
@@ -290,7 +281,6 @@ def carregar_bases(
         logger.exception("Erro inesperado ao carregar base PGFN")
         resultado.erro_pgfn = f"Erro inesperado ao carregar base PGFN: {e}"
 
-    # Base de CNDs (upload tem prioridade sobre arquivo local)
     try:
         if xlsx_bytes is not None:
             resultado.df_cnds = pd.read_excel(io.BytesIO(xlsx_bytes), sheet_name=0)
@@ -306,41 +296,56 @@ def carregar_bases(
 
 
 # ==============================================================================
-# CONSULTA À BRASILAPI (CADASTRO RECEITA FEDERAL)
+# CONSULTA À BRASILAPI COM FALLBACK AUTOMÁTICO PARA RECEITAWS
 # ==============================================================================
 class ConsultaCNPJError(Exception):
-    """Erro amigável de consulta de CNPJ, com mensagem pronta para exibição."""
+    """Erro amigável de consulta de CNPJ."""
 
 
 @st.cache_data(show_spinner=False, ttl=CACHE_TTL_SECONDS)
 def consultar_cnpj(cnpj_limpo: str) -> dict:
-    url = f"https://brasilapi.com.br/api/cnpj/v1/{cnpj_limpo}"
+    # 1ª Tentativa: BrasilAPI
+    url_brasilapi = f"https://brasilapi.com.br/api/cnpj/v1/{cnpj_limpo}"
     try:
-        resp = requests.get(url, headers={"User-Agent": "PainelFiscal/1.0"}, timeout=BRASILAPI_TIMEOUT)
-    except requests.exceptions.Timeout as exc:
-        raise ConsultaCNPJError(
-            "A consulta à Receita Federal demorou demais para responder. Tente novamente em instantes."
-        ) from exc
-    except requests.exceptions.ConnectionError as exc:
-        raise ConsultaCNPJError(
-            "Não foi possível conectar ao serviço da Receita Federal (BrasilAPI). Verifique sua conexão."
-        ) from exc
-    except requests.exceptions.RequestException as exc:
-        raise ConsultaCNPJError(f"Falha inesperada na consulta: {exc}") from exc
+        resp = requests.get(url_brasilapi, headers={"User-Agent": "PainelFiscal/1.0"}, timeout=BRASILAPI_TIMEOUT)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass  # Se falhar, tenta o fallback
 
-    if resp.status_code == 404:
-        raise ConsultaCNPJError("CNPJ não encontrado na base pública da Receita Federal.")
-    if resp.status_code == 429:
-        raise ConsultaCNPJError("Limite de consultas atingido. Aguarde alguns instantes e tente novamente.")
-    if resp.status_code >= 500:
-        raise ConsultaCNPJError("O serviço da Receita Federal está indisponível no momento. Tente mais tarde.")
-    if not resp.ok:
-        raise ConsultaCNPJError(f"Erro ao consultar CNPJ (HTTP {resp.status_code}).")
-
+    # 2ª Tentativa (Fallback): ReceitaWS (Gratuita, excelente redundância)
+    url_receitaws = f"https://www.receitaws.com.br/v1/cnpj/{cnpj_limpo}"
     try:
-        return resp.json()
-    except json.JSONDecodeError as exc:
-        raise ConsultaCNPJError("Resposta inválida do serviço de consulta.") from exc
+        resp_ws = requests.get(url_receitaws, headers={"User-Agent": "PainelFiscal/1.0"}, timeout=BRASILAPI_TIMEOUT)
+        if resp_ws.status_code == 200:
+            dados_ws = resp_ws.json()
+            if dados_ws.get("status") == "OK":
+                # Normaliza o formato do ReceitaWS para o padrão esperado pelo app
+                qsa_formatado = []
+                for q in dados_ws.get("qsa", []):
+                    qsa_formatado.append({
+                        "nome_socio": q.get("nome"),
+                        "qualificacao_socio": q.get("qual"),
+                    })
+                
+                return {
+                    "razao_social": dados_ws.get("nome"),
+                    "nome_fantasia": dados_ws.get("fantasia"),
+                    "descricao_situacao_cadastral": dados_ws.get("situacao"),
+                    "porte": dados_ws.get("porte"),
+                    "uf": dados_ws.get("uf"),
+                    "opcao_pelo_simples": dados_ws.get("simples", {}).get("optante", False),
+                    "qsa": qsa_formatado
+                }
+            elif dados_ws.get("status") == "ERROR":
+                raise ConsultaCNPJError(dados_ws.get("message", "CNPJ não encontrado."))
+    except ConsultaCNPJError as ce:
+        raise ce
+    except Exception as exc:
+        logger.exception("Falha em ambos os provedores de CNPJ")
+
+    # Se ambas falharem por completo ou derem 404
+    raise ConsultaCNPJError("CNPJ não encontrado ou serviços de consulta temporariamente indisponibles.")
 
 
 # ==============================================================================
@@ -366,14 +371,10 @@ def buscar_debito_pgfn(df_pgfn: pd.DataFrame, cnpj_limpo: str) -> tuple[pd.DataF
 # ==============================================================================
 with st.sidebar:
     st.markdown("### ⚙️ Fontes de Dados")
-    st.caption(
-        "Envie as bases atualizadas (opcional). Se nada for enviado, o app "
-        "tentará usar os arquivos padrão configurados no servidor."
-    )
+    st.caption("Envie as bases atualizadas (opcional). Se nada for enviado, o app usará os arquivos padrão.")
     upload_zip = st.file_uploader("Base PGFN (.zip)", type=["zip"], key="upload_zip")
     upload_xlsx = st.file_uploader("Base de CNDs (.xlsx)", type=["xlsx"], key="upload_xlsx")
     st.markdown("---")
-    st.caption(f"Cache das consultas: {CACHE_TTL_SECONDS // 60} min")
     if st.button("🔄 Limpar cache e recarregar bases"):
         st.cache_data.clear()
         st.rerun()
@@ -472,9 +473,6 @@ if dados_api:
     encontrados_pgfn, tem_debito_pgfn, valor_debito = buscar_debito_pgfn(df_pgfn, cnpj_limpo)
     valor_debito_fmt = formatar_moeda(valor_debito)
 
-    # --------------------------------------------------------------------
-    # BLOCO TRIBUTÁRIO: OPORTUNIDADES DE EDITAIS PGFN
-    # --------------------------------------------------------------------
     if tem_debito_pgfn:
         mensagem_wa = quote(
             f"Olá! Fiz o diagnóstico no sistema do CNPJ {cnpj_formatado} ({razao_social}) "
@@ -509,8 +507,6 @@ if dados_api:
         )
 
         st.markdown("### 🎯 Simulador de Editais Elegíveis (Transação PGFN)")
-        st.caption("Abaixo estão as modalidades de negociação da PGFN aplicáveis a este perfil de empresa:")
-
         cols_ed = st.columns(len(EDITAIS_PGFN))
         for idx, edital in enumerate(EDITAIS_PGFN):
             with cols_ed[idx]:
@@ -541,9 +537,6 @@ if dados_api:
             unsafe_allow_html=True,
         )
 
-    # --------------------------------------------------------------------
-    # DETALHAMENTO EM ABAS
-    # --------------------------------------------------------------------
     tab_cartao, tab_qsa, tab_pgfn_detalhes, tab_cnds = st.tabs(
         [
             "📋 Cadastro Completo (RFB)",
@@ -619,9 +612,6 @@ if dados_api:
         else:
             st.info("Nenhum dado de CND disponível.")
 
-# ==============================================================================
-# RODAPÉ DE TRANSPARÊNCIA E CONFORMIDADE
-# ==============================================================================
 st.markdown("---")
 st.markdown(
     f"""
@@ -634,4 +624,3 @@ st.markdown(
 """,
     unsafe_allow_html=True,
 )
-
